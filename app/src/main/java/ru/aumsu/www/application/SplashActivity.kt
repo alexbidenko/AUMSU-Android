@@ -21,7 +21,6 @@ class SplashActivity : BaseActivity() {
         if(sp.getString(USER_TOKEN_KEY, "") != "") {
             userData = Gson().fromJson(sp.getString(USER_DATA_KEY, ""), User::class.java)
 
-
             if(hasConnection()) {
                 val service = getRetrofit().create<RequestAPI>(RequestAPI::class.java)
 
@@ -52,7 +51,6 @@ class SplashActivity : BaseActivity() {
             } else {
                 Toast.makeText(this, "Отсутствует интернет соединение", Toast.LENGTH_LONG).show()
             }
-
             startActivity(MainActivity::class.java)
             finish()
         } else {

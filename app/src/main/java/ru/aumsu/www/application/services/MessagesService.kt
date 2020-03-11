@@ -2,6 +2,7 @@ package ru.aumsu.www.application.services
 
 import android.annotation.SuppressLint
 import android.app.*
+import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.util.Log
@@ -19,17 +20,20 @@ import ru.aumsu.www.application.BaseActivity
 import ru.aumsu.www.application.MainActivity
 import ru.aumsu.www.application.R
 import ru.aumsu.www.application.models.Message
+import ru.aumsu.www.application.models.User
 
 class MessagesService : IntentService("MessagesService") {
 
-    private val channel: Channel
+    private val pusher: Pusher
+    private lateinit var channel: Channel
+    private var userData: User? = null
 
     init {
         val options = PusherOptions()
         options.setCluster("eu")
         options.isEncrypted = false
 
-        val pusher = Pusher("f0076b29a03e5e7c3997", options)
+        pusher = Pusher("f0076b29a03e5e7c3997", options)
         pusher.connect(object : ConnectionEventListener {
             override fun onConnectionStateChange(p0: ConnectionStateChange) {
                 Log.i("Admire", "State changed to " + p0.currentState +
@@ -44,12 +48,16 @@ class MessagesService : IntentService("MessagesService") {
                 }
             }
         }, ConnectionState.ALL)
-
-        channel = pusher.subscribe("messages")
     }
 
     override fun onStartCommand(intent: Intent, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
+
+        return Service.START_STICKY
+    }
+
+    override fun onCreate() {
+        super.onCreate()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val importance = NotificationManager.IMPORTANCE_DEFAULT
             val mChannel = NotificationChannel(CHANNEL_ID, "Сообщения университета", importance)
@@ -58,14 +66,10 @@ class MessagesService : IntentService("MessagesService") {
             notificationManager.createNotificationChannel(mChannel)
         }
 
-        return Service.START_STICKY
+        updateConnection()
     }
 
     override fun onHandleIntent(intent: Intent?) {
-        Log.i("Admire", "onHandleIntent")
-        BaseActivity.userData!!.data?.let { data ->
-            createConnect(channel, data.split(";").map { it.split(":")[1].toInt() })
-        }
     }
 
     @SuppressLint("CheckResult")
@@ -76,33 +80,52 @@ class MessagesService : IntentService("MessagesService") {
                 "study-message-$id"
             ) { _, _, data ->
                 Log.i("Admire", data)
-                val message = Gson().fromJson(data, Message::class.java)
-                if(MainActivity.isAppRunning) messagesObservable.onSuccess(message)
-                else {
-                    val notificationIntent =
-                        Intent(this, MainActivity::class.java)
-                    val contentIntent = PendingIntent.getActivity(
-                        this,
-                        0, notificationIntent,
-                        PendingIntent.FLAG_CANCEL_CURRENT
-                    )
-
-                    val builder: NotificationCompat.Builder =
-                        NotificationCompat.Builder(this, CHANNEL_ID)
-                            .setSmallIcon(R.mipmap.ic_launcher_foreground)
-                            .setContentTitle("Уведомление от университета")
-                            .setContentText(message.message)
-                            .setContentIntent(contentIntent)
-                            .setAutoCancel(true)
-                            .setStyle(NotificationCompat.BigTextStyle().bigText(message.message))
-                            .addAction(R.drawable.ic_menu_send, "Принято", contentIntent)
-                            .setPriority(NotificationCompat.PRIORITY_HIGH)
-
-                    val notificationManager =
-                        NotificationManagerCompat.from(this)
-                    notificationManager.notify(1, builder.build())
-                }
+                onGetMessage(
+                    Gson().fromJson(data, Message::class.java)
+                )
             }
+        }
+    }
+
+    private fun onGetMessage(message: Message) {
+        val sp = getSharedPreferences(packageName, Context.MODE_PRIVATE)
+        if(Gson().fromJson(sp.getString(BaseActivity.USER_DATA_KEY, ""), User::class.java).id == message.from) return
+        if(MainActivity.isAppRunning) messagesObservable.onSuccess(message)
+        else {
+            val notificationIntent =
+                Intent(this, MainActivity::class.java)
+            val contentIntent = PendingIntent.getActivity(
+                this,
+                0, notificationIntent,
+                PendingIntent.FLAG_CANCEL_CURRENT
+            )
+
+            val builder: NotificationCompat.Builder =
+                NotificationCompat.Builder(this, CHANNEL_ID)
+                    .setSmallIcon(R.mipmap.ic_launcher_foreground)
+                    .setContentTitle("Уведомление от университета")
+                    .setContentText(message.message)
+                    .setContentIntent(contentIntent)
+                    .setAutoCancel(true)
+                    .setStyle(NotificationCompat.BigTextStyle().bigText(message.message))
+                    .addAction(R.drawable.ic_menu_send, "Принято", contentIntent)
+                    .setPriority(NotificationCompat.PRIORITY_HIGH)
+
+            val notificationManager =
+                NotificationManagerCompat.from(this)
+            notificationManager.notify(1, builder.build())
+        }
+    }
+
+    private fun updateConnection() {
+        try {
+            val sp = getSharedPreferences(packageName, Context.MODE_PRIVATE)
+            userData = Gson().fromJson(sp.getString(BaseActivity.USER_DATA_KEY, ""), User::class.java)
+        } catch (e: Exception) {}
+        pusher.unsubscribe("messages")
+        channel = pusher.subscribe("messages")
+        userData?.data?.let { data ->
+            createConnect(channel, data.split(";").map { it.split(":")[1].toInt() })
         }
     }
 
